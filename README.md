@@ -7,7 +7,7 @@ Mobilní studijní aplikace pro Lineární algebru 1 a Matematickou analýzu I. 
 - LA1: 257 karet a 152 otázek, kapitoly 1–7.
 - MA I: 175 karet a 108 otázek, všech 6 kapitol dodaného PDF.
 - Výběr více kapitol, definic, tvrzení, důkazů, postupů a příkladů; hledání pojmů a filtr „nové / ještě ne / umím“.
-- Kartičky s odhalením odpovědi, hodnocením a krokem zpět. Kvíz na 10, 20 nebo všechny vybrané otázky, promíchané možnosti, vysvětlení a opakování obtížných.
+- Kartičky se otáčejí kliknutím na celou plochu, Enterem nebo mezerníkem. Odpověď je na rubu; následuje hodnocení a možnost kroku zpět. Kvíz na 10, 20 nebo všechny vybrané otázky, promíchané možnosti, vysvětlení a opakování obtížných.
 - Ukládání pokroku a rozpracované sady, export a obnovení zálohy.
 - Offline aplikace včetně matematických fontů a zdrojových PDF; bez účtu a backendu.
 
@@ -24,7 +24,7 @@ Matematický obsah je redigovaný pouze z uživatelem dodaných skript:
 
 U každé položky `source.page` označuje skutečnou PDF stránku, `source.label` původní definici, větu nebo oddíl. Odkaz „Skripta“ v odpovědi míří na danou stránku. Karty zkracují a rozdělují výklad do samostatných otázek; důkazové karty zachovávají předpoklady a podstatné kroky. Úplný text a původní obrázky jsou dostupné v PDF. Kvízové nesprávné možnosti slouží jako jednoznačné kontrasty k doloženému tvrzení.
 
-Obsah byl kontrolován proti zdrojům, včetně samostatnosti zadání, hypotéz, duplicit a matematické sazby. Nejde o oficiální materiál MFF ani záruku bezchybnosti. Konkrétní zkouškové požadavky určuje vyučující.
+Otázky jsou samostatná matematická zadání, která nevyžadují znalost konkrétních skript. Vysvětlení a odpovědi vycházejí ze zdrojů. Méně známý zápis shodnosti modulo je ve vysvětleních vyjádřen slovně pomocí stejného zbytku po dělení. Obsah byl kontrolován proti zdrojům, včetně samostatnosti zadání, hypotéz, duplicit a matematické sazby. Nejde o oficiální materiál MFF ani záruku bezchybnosti. Konkrétní zkouškové požadavky určuje vyučující.
 
 Web byl použit jen k ověření zařazení předmětů a hranice LA1, nikoli jako zdroj matematického výkladu: [studijní plán finanční matematiky 2026/27](https://www.mff.cuni.cz/cs/studenti/bc-a-mgr-studium/studijni-plany/2026-2027/matematika/bc/financni-matematika), [sylabus NMAG113](https://is.cuni.cz/studium/predmety/index.php?do=predmet&kod=NMAG113&stev_print=on). NMTM101 je součástí tohoto plánu, přestože předmluva skript zmiňuje učitelství.
 
@@ -48,7 +48,7 @@ Otevři `http://localhost:8765`. Pro automatické kontroly použij Node.js 18+:
 npm test
 ```
 
-Testy kontrolují všechny identifikátory, otázky, zdrojové rozsahy, možnosti odpovědí, sazbu všech 2 789 matematických úseků, kombinace filtrů, promíchání bez duplicit, import, sloučení historie a obsluhu PDF rozsahů offline. Kontroly interakcí v prohlížeči zahrnují mobilní rozložení, otočení a hodnocení karty, krok zpět, uložení po obnovení stránky, kvíz, filtry, export/import a načtení při vypnutém lokálním serveru.
+Testy kontrolují všechny identifikátory, otázky, zdrojové rozsahy, možnosti odpovědí, matematickou sazbu všech otázek, odpovědí a možností, kombinace filtrů, promíchání bez duplicit, import, sloučení historie a obsluhu PDF rozsahů offline. Kontroly interakcí v prohlížeči zahrnují mobilní rozložení, otočení a hodnocení karty, krok zpět, uložení po obnovení stránky, kvíz, filtry, export/import a načtení při vypnutém lokálním serveru.
 
 ## Struktura
 

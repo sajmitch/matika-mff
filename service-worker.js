@@ -1,4 +1,4 @@
-const CACHE='matika-v2-20261024-final';
+const CACHE='matika-v2-20261024-flip-questions';
 const ASSETS=['./','./index.html','./style.css','./math.css','./katex.js','./core.js','./app.js','./content.json','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png','./apple-touch-icon.png','./skripta_la1.pdf','./MA1.pdf'];
 self.addEventListener('install',event=>{event.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(ASSETS.map(url=>new Request(url,{cache:'reload'})));await self.skipWaiting();})());});
 self.addEventListener('activate',event=>{event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith('matika-')&&k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim();})());});

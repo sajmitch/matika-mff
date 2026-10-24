@@ -8,7 +8,7 @@ const types={definition:'Definice',theorem:'Tvrzení',proof:'Důkazy',method:'Po
 const states={new:'Nové',learning:'Ještě ne',known:'Umím'};
 function noun(n,one,few,many){return n===1?one:n>=2&&n<=4?few:many;}
 function itemNoun(n,acc=false){return mode==='cards'?noun(n,acc?'kartu':'karta','karty','karet'):noun(n,acc?'otázku':'otázka','otázky','otázek');}
-const paths={arrow:'M4 12h16m-6-6 6 6-6 6',back:'M20 12H4m6-6-6 6 6 6',close:'m6 6 12 12M18 6 6 18',check:'m5 12 4 4L19 6',filter:'M4 7h16M7 12h10M10 17h4',shuffle:'m4 5 16 14m-4 0h4v-4M4 19 20 5m-4 0h4v4',book:'M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1m0-15c3-2 6-2 9-1v15c-3-1-6-1-9 1V5',download:'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',upload:'M12 16V3m-5 5 5-5 5 5M4 17v4h16v-4',undo:'M4 10h9a6 6 0 0 1 0 12M4 10l5-5m-5 5 5 5',external:'M14 3h7v7m0-7L10 14M10 3H3v18h18v-7',pause:'M8 5v14M16 5v14',chart:'M4 20V10m8 10V4m8 16v-7'};
+const paths={arrow:'M4 12h16m-6-6 6 6-6 6',back:'M20 12H4m6-6-6 6 6 6',close:'m6 6 12 12M18 6 6 18',flip:'M20 8a8 8 0 0 0-14-3L3 8m0-5v5h5m-4 8a8 8 0 0 0 14 3l3-3m0 5v-5h-5',check:'m5 12 4 4L19 6',filter:'M4 7h16M7 12h10M10 17h4',shuffle:'m4 5 16 14m-4 0h4v-4M4 19 20 5m-4 0h4v4',book:'M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1m0-15c3-2 6-2 9-1v15c-3-1-6-1-9 1V5',download:'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',upload:'M12 16V3m-5 5 5-5 5 5M4 17v4h16v-4',undo:'M4 10h9a6 6 0 0 1 0 12M4 10l5-5m-5 5 5 5',external:'M14 3h7v7m0-7L10 14M10 3H3v18h18v-7',pause:'M8 5v14M16 5v14',chart:'M4 20V10m8 10V4m8 16v-7'};
 function icon(name){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name]||paths.arrow}"/></svg>`;}
 function escape(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function math(s){return String(s??'').split(/(\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/g).map((part,i)=>{
@@ -60,11 +60,41 @@ function start(items=filtered(),resume=false,limitOverride=null){
  if(!resume){const size=limitOverride!==null?limitOverride:mode==='quiz'?Number($('#round-size')?.value??10):0;let ordered=C.shuffle(items);if(size>0)ordered=ordered.slice(0,size);session={subject,mode,ids:ordered.map(x=>x.id),index:0,results:[],optionOrders:{}};saveSession();}
  revealed=false;selected=null;go('study');
 }
+let flashcardObserver=null;
+function flashcard(item,chapter){
+ return `<div class="flashcard ${revealed?'is-flipped':''}" data-action="flip-card" tabindex="0" role="group" aria-roledescription="otočná kartička" aria-label="${revealed?'Odpověď':'Otázka'}; kliknutím otočíš" aria-describedby="flip-instructions"><div class="flip-inner"><section class="study-card card-face card-front" aria-hidden="${revealed}" ${revealed?'inert':''}><div class="card-meta"><span class="kind">${types[item.type]}</span><span>${escape(chapter)}</span></div><h2 class="card-question" id="question">${rich(item.question)}</h2><div class="flip-prompt"><span>${icon('flip')}</span><span>Klepnutím otočit</span></div></section><section class="study-card card-face card-back" aria-hidden="${!revealed}" ${!revealed?'inert':''}><div class="card-meta"><span class="kind">Odpověď</span><span>${escape(chapter)}</span></div><div class="flip-answer">${rich(item.answer)}</div><div class="flip-prompt"><span>${icon('flip')}</span><span>Zpět na otázku</span></div></section></div><span class="sr-only" id="flip-instructions">Kartičku otočíš kliknutím, Enterem nebo mezerníkem.</span></div>`;
+}
+function fitFlashcard(){
+ const card=$('.flashcard');if(!card)return;
+ const active=card.querySelector(revealed?'.card-back':'.card-front');
+ card.querySelector('.flip-inner').style.height=`${Math.ceil(active.offsetHeight)}px`;
+}
+function flipCard(){
+ if(mode!=='cards'||view!=='study')return;
+ const card=$('.flashcard');if(!card)return;
+ revealed=!revealed;
+ card.classList.toggle('is-flipped',revealed);
+ card.setAttribute('aria-label',`${revealed?'Odpověď':'Otázka'}; kliknutím otočíš`);
+ for(const face of card.querySelectorAll('.card-face')){
+  const hidden=face.classList.contains('card-front')?revealed:!revealed;
+  face.setAttribute('aria-hidden',String(hidden));face.inert=hidden;
+ }
+ $('#card-assessment').hidden=!revealed;
+ $('#card-source').hidden=!revealed;
+ fitFlashcard();
+}
 function studyPage(){
  if(!session||session.index>=session.ids.length){resultPage();return;}
  const item=byId.get(session.ids[session.index]);const chapter=chapterName(item.chapter);
  if(!item){go('subject');return;}
- $('#main').innerHTML=`<section class="session-wrap animate-in"><div class="session-top"><button class="back" data-action="exit-session">${icon('back')} ${short[subject]}</button><span class="counter">${session.index+1} <span aria-label="z">/</span> ${session.ids.length}</span><button class="icon-button" data-action="shuffle-session" aria-label="Zamíchat zbývající">${icon('shuffle')}</button></div><div class="progress-track" role="progressbar" aria-label="Průchod sadou" aria-valuenow="${session.index}" aria-valuemin="0" aria-valuemax="${session.ids.length}"><span style="width:${session.index/session.ids.length*100}%"></span></div><article class="study-card ${mode==='quiz'?'quiz-card':''}"><div class="card-meta"><span class="kind">${types[item.type]}</span><span>${escape(chapter)}</span></div><h2 class="card-question" id="question">${rich(item.question)}</h2>${mode==='cards'?(revealed?`<div class="answer"><div class="answer-label">Odpověď</div>${rich(item.answer)}${source(item)}</div>`:`<button class="primary reveal" data-action="reveal">Ukázat odpověď</button>`):`<div class="options" role="group" aria-label="Možnosti odpovědi">${getOptions(item).map((idx,pos)=>`<button class="option ${selected!==null?(idx===item.correct?'correct':idx===selected?'wrong':''):''}" data-action="answer" data-choice="${idx}" ${selected!==null?'disabled':''}><span class="option-letter">${selected!==null&&idx===item.correct?'✓':selected===idx?'×':String.fromCharCode(65+pos)}</span>${rich(item.options[idx])}${selected!==null&&idx===item.correct?'<span class="sr-only">Správná odpověď</span>':''}</button>`).join('')}</div>`}</article>${mode==='cards'&&revealed?`<div class="assessment"><button class="secondary" data-action="rate" data-status="learning">Ještě ne</button><button class="primary" data-action="rate" data-status="known">${icon('check')} Umím</button></div>`:''}${mode==='quiz'&&selected!==null?`<div class="quiz-explanation" role="status"><h3>${selected===item.correct?'Správně.':'Správná odpověď je označená.'}</h3>${rich(item.explanation)}${source(item)}</div><div class="quiz-bottom"><div class="confidence" aria-label="Vlastní hodnocení"><button data-action="confidence" data-status="learning" class="${C.status(progress,item.id)==='learning'?'active':''}" aria-pressed="${C.status(progress,item.id)==='learning'}">Ještě ne</button><button data-action="confidence" data-status="known" class="${C.status(progress,item.id)==='known'?'active':''}" aria-pressed="${C.status(progress,item.id)==='known'}">Umím</button></div><button class="primary" data-action="next">${session.index===session.ids.length-1?'Dokončit':'Další otázka'} ${icon('arrow')}</button></div>`:''}<div class="session-foot"><button class="text-button" data-action="undo" ${!session.results.length?'disabled':''}>${icon('undo')} Zpět</button><span class="key-hint">${mode==='cards'?'Mezerník · otočit &nbsp; 1 · ještě ne &nbsp; 2 · umím':'1–4 · odpověď &nbsp; Enter · další'}</span><button class="text-button" data-action="skip" ${selected!==null?'disabled':''}>Přeskočit ${icon('arrow')}</button></div></section>`;
+ const body=mode==='cards'?flashcard(item,chapter):`<article class="study-card quiz-card"><div class="card-meta"><span class="kind">${types[item.type]}</span><span>${escape(chapter)}</span></div><h2 class="card-question" id="question">${rich(item.question)}</h2><div class="options" role="group" aria-label="Možnosti odpovědi">${getOptions(item).map((idx,pos)=>`<button class="option ${selected!==null?(idx===item.correct?'correct':idx===selected?'wrong':''):''}" data-action="answer" data-choice="${idx}" ${selected!==null?'disabled':''}><span class="option-letter">${selected!==null&&idx===item.correct?'✓':selected===idx?'×':String.fromCharCode(65+pos)}</span>${rich(item.options[idx])}${selected!==null&&idx===item.correct?'<span class="sr-only">Správná odpověď</span>':''}</button>`).join('')}</div></article>`;
+ $('#main').innerHTML=`<section class="session-wrap animate-in"><div class="session-top"><button class="back" data-action="exit-session">${icon('back')} ${short[subject]}</button><span class="counter">${session.index+1} <span aria-label="z">/</span> ${session.ids.length}</span><button class="icon-button" data-action="shuffle-session" aria-label="Zamíchat zbývající">${icon('shuffle')}</button></div><div class="progress-track" role="progressbar" aria-label="Průchod sadou" aria-valuenow="${session.index}" aria-valuemin="0" aria-valuemax="${session.ids.length}"><span style="width:${session.index/session.ids.length*100}%"></span></div>${body}${mode==='cards'?`<div class="assessment" id="card-assessment" ${!revealed?'hidden':''}><button class="secondary" data-action="rate" data-status="learning">Ještě ne</button><button class="primary" data-action="rate" data-status="known">${icon('check')} Umím</button></div><div class="card-source" id="card-source" ${!revealed?'hidden':''}>${source(item)}</div>`:''}${mode==='quiz'&&selected!==null?`<div class="quiz-explanation" role="status"><h3>${selected===item.correct?'Správně.':'Správná odpověď je označená.'}</h3>${rich(item.explanation)}${source(item)}</div><div class="quiz-bottom"><div class="confidence" aria-label="Vlastní hodnocení"><button data-action="confidence" data-status="learning" class="${C.status(progress,item.id)==='learning'?'active':''}" aria-pressed="${C.status(progress,item.id)==='learning'}">Ještě ne</button><button data-action="confidence" data-status="known" class="${C.status(progress,item.id)==='known'?'active':''}" aria-pressed="${C.status(progress,item.id)==='known'}">Umím</button></div><button class="primary" data-action="next">${session.index===session.ids.length-1?'Dokončit':'Další otázka'} ${icon('arrow')}</button></div>`:''}<div class="session-foot"><button class="text-button" data-action="undo" ${!session.results.length?'disabled':''}>${icon('undo')} Zpět</button><span class="key-hint">${mode==='cards'?'Mezerník · otočit &nbsp; 1 · ještě ne &nbsp; 2 · umím':'1–4 · odpověď &nbsp; Enter · další'}</span><button class="text-button" data-action="skip" ${selected!==null?'disabled':''}>Přeskočit ${icon('arrow')}</button></div></section>`;
+ flashcardObserver?.disconnect();
+ if(mode==='cards'){
+  fitFlashcard();document.fonts.ready.then(fitFlashcard);
+  flashcardObserver=new ResizeObserver(fitFlashcard);
+  document.querySelectorAll('.card-face').forEach(face=>flashcardObserver.observe(face));
+ }
 }
 function getOptions(item){if(!session.optionOrders[item.id]){session.optionOrders[item.id]=C.shuffle(item.options.map((_,i)=>i));saveSession();}return session.optionOrders[item.id];}
 function rate(status){if(!revealed)return;const id=session.ids[session.index],previous=mark(id,status);session.results.push({id,previous,status,skipped:false});advance();}
@@ -84,7 +114,7 @@ function progressPage(){
  $('#backup-file').onchange=importFile;
 }
 function go(target){view=target;const hash=target==='home'?'#':target==='progress'?'#pokrok':`#${subject}`;if(location.hash!==hash)window.history.pushState(null,'',hash);render();}
-function render(scroll=true){theme();shell();if(view==='home')home();else if(view==='subject')subjectPage();else if(view==='progress')progressPage();else if(view==='study')studyPage();else resultPage();if(scroll)window.scrollTo({top:0});}
+function render(scroll=true){flashcardObserver?.disconnect();theme();shell();if(view==='home')home();else if(view==='subject')subjectPage();else if(view==='progress')progressPage();else if(view==='study')studyPage();else resultPage();if(scroll)window.scrollTo({top:0});}
 let dialogReturn=null;
 function showDialog(html){const d=$('#dialog'),wasOpen=d.open,focused=document.activeElement?.dataset?.action;if(!wasOpen)dialogReturn=document.activeElement;d.innerHTML=html;if(!wasOpen)d.showModal();else if(focused)d.querySelector(`[data-action="${focused}"]`)?.focus();}
 function closeDialog(){const d=$('#dialog');d.close();dialogReturn?.focus?.();}
@@ -107,7 +137,7 @@ async function action(e){const el=e.target.closest('[data-action]');if(!el||el.d
  if(a==='start'){start();return;}
  if(a==='resume'){const s=read(SESSION,null);if(s&&s.ids.every(id=>byId.has(id))){session=s;subject=s.subject;mode=s.mode;selected=s.pending??null;revealed=false;go('study');}return;}
  if(a==='exit-session'){saveSession();go('subject');return;}
- if(a==='reveal'){revealed=true;render(false);return;}
+ if(a==='flip-card'){if(!e.target.closest('a')&&!window.getSelection()?.toString())flipCard();return;}
  if(a==='rate'){rate(el.dataset.status);return;}
  if(a==='answer'){answer(Number(el.dataset.choice));return;}
  if(a==='next'){if(selected!==null)advance();return;}
@@ -121,7 +151,7 @@ async function action(e){const el=e.target.closest('[data-action]');if(!el||el.d
 document.addEventListener('click',action);
 $('#dialog').addEventListener('click',e=>{if(e.target===$('#dialog')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeDialog();}});
 document.addEventListener('keydown',e=>{if(e.altKey||e.ctrlKey||e.metaKey||$('#dialog').open||['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.target.tagName)||view!=='study')return;
- if(mode==='cards'){if(e.code==='Space'){e.preventDefault();revealed=!revealed;render(false);}else if(revealed&&['1','2'].includes(e.key)){e.preventDefault();rate(e.key==='2'?'known':'learning');}}
+ if(mode==='cards'){if(e.code==='Space'||(e.key==='Enter'&&e.target.closest('.flashcard'))){e.preventDefault();flipCard();}else if(revealed&&['1','2'].includes(e.key)){e.preventDefault();rate(e.key==='2'?'known':'learning');}}
  else if(selected===null&&/^[1-4]$/.test(e.key)){e.preventDefault();const item=byId.get(session.ids[session.index]);answer(getOptions(item)[Number(e.key)-1]);}else if(selected!==null&&e.key==='Enter'){e.preventDefault();advance();}
 });
 function route(){const hash=location.hash.slice(1);if(hash==='pokrok')view='progress';else if(['la','ma'].includes(hash)){subject=hash;view='subject';}else view='home';render();}
