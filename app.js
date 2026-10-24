@@ -1,192 +1,130 @@
-/* Matika — local-first offline-capable study app. No trackers, no accounts, no backend. */
+/* Matika. Static, offline-capable, with all progress kept on this device. */
 'use strict';
-const $=sel=>document.querySelector(sel);
-const STORAGE_KEY='matika-progress-v2';
-const SETTINGS_KEY='matika-settings-v2';
-const ALL_TYPES=['definice','vety','tvrzeni','dukazy','priklady'];
-const TYPE_NAMES={definice:'Definice',vety:'Věty',tvrzeni:'Tvrzení',dukazy:'Důkazy',priklady:'Příklady'};
-const icons={home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',cards:'<rect x="5" y="4" width="15" height="17" rx="2"/><path d="M2 7V5a2 2 0 0 1 2-2h12M9 10h7M9 14h7"/>',quiz:'<path d="M9 12 11 14 15 10"/><rect x="3" y="3" width="18" height="18" rx="3"/>',stats:'<path d="M4 20V10M10 20V4M16 20v-8M22 20V7"/>',sliders:'<path d="M4 7h16M4 17h16M9 4v6M16 14v6"/>',arrow:'<path d="M5 12h14m-6-6 6 6-6 6"/>',check:'<path d="m5 12 4 4 10-10"/>',close:'<path d="M18 6 6 18M6 6l12 12"/>'};
-function ico(k,size=20){return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[k]||icons.arrow}</svg>`}
-const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-const nfmt=n=>Number(n).toLocaleString('cs-CZ');
-const safePDF=(c)=>{const source=DATA.sources.find(s=>s.id===c.subject);return `./${encodeURIComponent(source.pdf)}#page=${Number(c.page)}`};
-const prefersReduced=()=>window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const clone=v=>JSON.parse(JSON.stringify(v));
-function getStored(key,fallback){try{return JSON.parse(localStorage.getItem(key))||clone(fallback)}catch(_){return clone(fallback)}}
-let DATA={cards:[],quizzes:[],sources:[]};
-let progress=getStored(STORAGE_KEY,{cards:{},quizzes:{},history:{},totalAnswers:0});
-let settings=getStored(SETTINGS_KEY,{subject:'an',chapters:{an:[],la:[]},types:[...ALL_TYPES],status:'all',quizSize:15});
-let view='home',overlay=null,zoomSrc=null,session=null,mcqAnswer=null,studyRevealed=false,toastTimer=null;
-let draft=null;
-function persist(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(progress))}catch(_){toast('Úložiště je plné. Exportuj si pokrok.')}}
-function persistSettings(){try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings))}catch(_){}}
-function remember(card, value, isQuiz=false){
- const collection=isQuiz?progress.quizzes:progress.cards;
- const prev=collection[card]||{attempts:0,correct:0};
- const knew=value==='know';
- collection[card]={status:value,attempts:prev.attempts+1,correct:prev.correct+(knew?1:0),last:new Date().toISOString()};
- const day=new Date().toISOString().slice(0,10);
- if(!progress.history)progress.history={};
- progress.history[day]=(progress.history[day]||0)+1;
- progress.totalAnswers=(progress.totalAnswers||0)+1;
- persist();
+(async function(){
+const C=window.MatikaCore,$=s=>document.querySelector(s);
+const STORE='matika-mff:v2',SESSION='matika-mff:session:v2',PREFS='matika-mff:filters:v2';
+const names={la:'Lineární algebra',ma:'Matematická analýza'},short={la:'LA1',ma:'MA I'};
+const types={definition:'Definice',theorem:'Tvrzení',proof:'Důkazy',method:'Postupy',example:'Příklady'};
+const states={new:'Nové',learning:'Ještě ne',known:'Umím'};
+function noun(n,one,few,many){return n===1?one:n>=2&&n<=4?few:many;}
+function itemNoun(n,acc=false){return mode==='cards'?noun(n,acc?'kartu':'karta','karty','karet'):noun(n,acc?'otázku':'otázka','otázky','otázek');}
+const paths={arrow:'M4 12h16m-6-6 6 6-6 6',back:'M20 12H4m6-6-6 6 6 6',close:'m6 6 12 12M18 6 6 18',check:'m5 12 4 4L19 6',filter:'M4 7h16M7 12h10M10 17h4',shuffle:'m4 5 16 14m-4 0h4v-4M4 19 20 5m-4 0h4v4',book:'M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1m0-15c3-2 6-2 9-1v15c-3-1-6-1-9 1V5',download:'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',upload:'M12 16V3m-5 5 5-5 5 5M4 17v4h16v-4',undo:'M4 10h9a6 6 0 0 1 0 12M4 10l5-5m-5 5 5 5',external:'M14 3h7v7m0-7L10 14M10 3H3v18h18v-7',pause:'M8 5v14M16 5v14',chart:'M4 20V10m8 10V4m8 16v-7'};
+function icon(name){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name]||paths.arrow}"/></svg>`;}
+function escape(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function math(s){return String(s??'').split(/(\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/g).map((part,i)=>{
+ if(part.startsWith('$')){const block=part.startsWith('$$'),tex=part.slice(block?2:1,block?-2:-1);try{return katex.renderToString(tex,{displayMode:block,throwOnError:true,strict:'ignore',trust:false,output:'htmlAndMathml'});}catch(e){console.error('Math:',tex,e.message);return escape(part);}}
+ return escape(part).replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
+}).join('');}
+function rich(s){return `<div class="math"><p>${math(s)}</p></div>`;}
+function read(key,fallback){try{return JSON.parse(localStorage.getItem(key))??fallback;}catch{return fallback;}}
+let storageWarned=false;
+function save(key,value){try{localStorage.setItem(key,JSON.stringify(value));return true;}catch{if(!storageWarned){storageWarned=true;toast('Pokrok nejde uložit. Exportuj si zálohu v Pokroku.');}return false;}}
+function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('toast');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('toast'),3600);}
+let data;
+try{const response=await fetch('content.json');if(!response.ok)throw Error('HTTP '+response.status);data=await response.json();if(!data.cards?.length||!data.quizzes?.length)throw Error('Chybí obsah');}
+catch(error){$('#main').innerHTML=`<div class="empty"><h1>Ještě chvilku.</h1><p>Obsah se nepodařilo načíst. Připoj se a zkus to znovu.</p><button class="primary" id="retry">Zkusit znovu</button></div>`;$('#retry').onclick=()=>location.reload();return;}
+const all=[...data.cards,...data.quizzes],byId=new Map(all.map(x=>[x.id,x])),chapById=new Map(data.chapters.map(x=>[x.id,x]));
+let stored=read(STORE,{}),progress={};
+try{progress=C.validateImport({app:'matika-mff',version:2,progress:stored.progress||{}},all.map(x=>x.id));}catch{toast('Uložený pokrok se nepodařilo načíst.');}
+let history=C.validateHistory(stored.history,all.map(x=>x.id));
+let preferences=read(PREFS,{});if(!preferences||typeof preferences!=='object'||Array.isArray(preferences))preferences={};let subject='la',mode='cards',view='home',session=null,revealed=false,selected=null,draft=null;
+const defaultFilter=sub=>({subject:sub,chapters:data.chapters.filter(c=>c.subject===sub).map(c=>c.id),types:Object.keys(types),statuses:Object.keys(states),query:''});
+function getFilter(sub=subject){const d=defaultFilter(sub),p=preferences[sub];if(!p||!Array.isArray(p.chapters)||!Array.isArray(p.types)||!Array.isArray(p.statuses))return d;return{subject:sub,chapters:p.chapters.filter(id=>d.chapters.includes(id)),types:p.types.filter(t=>types[t]),statuses:p.statuses.filter(s=>states[s]),query:typeof p.query==='string'?p.query:''};}
+function setFilter(f){preferences[subject]=f;save(PREFS,preferences);}
+function filtered(){return C.filter(mode==='cards'?data.cards:data.quizzes,getFilter(),progress);}
+function persist(){save(STORE,{progress,history});}
+function localDay(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function mark(id,status){const previous=progress[id]?{...progress[id]}:null;progress[id]={status,updated:Date.now(),seen:(progress[id]?.seen||0)+1};history.push({id,day:localDay()});history=history.slice(-10000);persist();return previous;}
+function theme(){document.documentElement.style.setProperty('--accent',subject==='ma'?'#805f4c':'#315b4e');document.documentElement.style.setProperty('--tint',subject==='ma'?'#f0e8e2':'#e7eee6');}
+function pct(items){return items.length?Math.round(C.counts(items,progress).known/items.length*100):0;}
+function chapterName(id){return chapById.get(id)?.title||'';}
+function source(item){const file=item.subject==='la'?'skripta_la1.pdf':'MA1.pdf';const printed=item.subject==='ma'?item.source.page-4:item.source.page;return `<a class="source-link" title="${escape(item.source.label)}" href="${file}#page=${item.source.page}" target="_blank" rel="noopener">${icon('book')} Skripta · s. ${printed}${icon('external')}</a>`;}
+function shell(){
+ $('#header').innerHTML=`<button class="brand" data-action="home" aria-label="Matika, úvod"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="10" stroke="#315b4e"/><path d="m8 22 4-12 4 8 4-8 4 12" stroke="#315b4e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>matika</button><nav aria-label="Hlavní navigace"><button data-action="home" class="${view==='home'||view==='subject'?'active':''}" ${view==='home'?'aria-current="page"':''}>Předměty</button><button data-action="progress" class="${view==='progress'?'active':''}" ${view==='progress'?'aria-current="page"':''}>Pokrok</button></nav>`;
+ $('#footer').innerHTML=`<span>${navigator.onLine?'Matika':'<span class="offline">Offline</span>'}</span><button data-action="about">O aplikaci & zdroje</button>`;
 }
-function statusFor(id,quiz=false){return (quiz?progress.quizzes:progress.cards)?.[id]?.status||'new'}
-function chaptersFor(sub){return DATA.sources.find(s=>s.id===sub)?.chapters||[]}
-function allowed(c,isQuiz=false,opts=settings){
- if(opts.subject!=='both'&&opts.subject!==c.subject)return false;
- if(!opts.types.includes(c.type))return false;
- const chapters=opts.chapters[c.subject]||[];
- if(chapters.length&&!chapters.includes(c.chapter))return false;
- const st=statusFor(c.id,isQuiz);
- return opts.status==='all'||(opts.status==='new'?st==='new':opts.status==='know'?st==='know':st==='repeat');
-}
-function filtered(kind){return DATA[kind].filter(c=>allowed(c,kind==='quizzes'))}
-function shuffle(input){const arr=[...input];for(let i=arr.length-1;i>0;i--){let j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]]}return arr}
-function toast(s){document.querySelector('.toast')?.remove();const node=document.createElement('div');node.className='toast';node.textContent=s;document.body.appendChild(node);clearTimeout(toastTimer);toastTimer=setTimeout(()=>node.remove(),2600)}
-function titleForSub(sub){return sub==='an'?'Analýza':sub==='la'?'LA1':'Oba předměty'}
-function subChoices(){return `<div class="subject-tabs" role="group" aria-label="Výběr předmětu">${[['an','Analýza'],['la','LA1'],['both','Mix obou']].map(([id,label])=>`<button class="tab ${settings.subject===id?'active':''}" data-action="subject" data-id="${id}" aria-pressed="${settings.subject===id}">${label}</button>`).join('')}</div>`}
-function topbar(){return `<header class="topbar"><a href="#home" class="brand" data-action="navigate" data-id="home"><span class="brand-mark">m</span><span>matika<span style="color:#a4acaa">.</span></span></a><button class="subtle-action" data-action="settings">Záloha ↗</button></header>`}
-function navigation(){return `<nav class="bottom-nav" aria-label="Hlavní navigace">${[['home','Domů','home'],['study','Kartičky','cards'],['quiz','Kvíz','quiz'],['stats','Pokrok','stats']].map(([id,label,ic])=>`<button data-action="navigate" data-id="${id}" class="nav-item ${view===id?'active':''}" aria-current="${view===id?'page':'false'}"><span class="nav-dot">${ico(ic)}</span>${label}</button>`).join('')}</nav>`}
+function art(sub){if(sub==='la')return `<svg class="art" viewBox="0 0 200 180" fill="none" aria-hidden="true"><path d="m70 15 94 42v87l-94 20-50-63z" stroke="#648064" stroke-width="1"/><path d="m70 15 21 91 73 38M20 101l71 5-21 58m21-58 73-49M70 15 20 101" stroke="#648064" stroke-width="1"/><path d="m70 15 21 91-71-5z" fill="#a9bba0" fill-opacity=".35"/><circle cx="91" cy="106" r="4" fill="#315b4e"/><circle cx="164" cy="57" r="3" fill="#315b4e"/><path d="M10 159h175M34 170V6" stroke="#648064" stroke-opacity=".3" stroke-dasharray="3 5"/></svg>`;
+ return `<svg class="art" viewBox="0 0 200 180" fill="none" aria-hidden="true"><path d="M18 145h165M37 165V18" stroke="#a6876b" stroke-opacity=".6"/><path d="M37 145C60 145 65 45 103 45S135 135 176 17" stroke="#896347" stroke-width="2"/><path d="M37 145C60 145 65 45 103 45S135 135 176 17V145Z" fill="#ccb59b" fill-opacity=".35"/><path d="M37 45h67v100M138 145V92" stroke="#a6876b" stroke-dasharray="3 5"/><circle cx="103" cy="45" r="4" fill="#896347"/><path d="m77 20 53 49" stroke="#896347" stroke-opacity=".7"/></svg>`;}
 function home(){
- const known=DATA.cards.filter(c=>statusFor(c.id)==='know').length;
- const total=DATA.cards.length;
- const pct=total?Math.round(known/total*100):0;
- const subj=(id)=>DATA.cards.filter(c=>c.subject===id).length;
- return `<div class="hero"><div class="eyebrow">TVŮJ MALÝ STUDIJNÍ PROSTOR</div><h1>Matika, trochu<br><i>po svém.</i></h1><p>Dva předměty. Jedna klidnější cesta skrz skripta.</p></div>
- <div class="sectiontitle"><h2>Co se dnes naučíme?</h2><span class="small-muted">Vyber předmět</span></div>
- <div class="subject-grid">
- <button class="subject-tile analysis" data-action="choose-study" data-id="an"><span class="tile-arrow">↗</span><span class="tile-symbol">∫</span><span class="tile-bottom"><strong>Matematická<br>analýza</strong><span>${DATA.sources.find(s=>s.id==='an').chapters.length} kapitol · ${nfmt(subj('an'))} kartiček</span></span></button>
- <button class="subject-tile algebra" data-action="choose-study" data-id="la"><span class="tile-arrow">↗</span><span class="tile-symbol">⊕</span><span class="tile-bottom"><strong>Lineární<br>algebra 1</strong><span>${DATA.sources.find(s=>s.id==='la').chapters.length} kapitol · ${nfmt(subj('la'))} kartiček</span></span></button></div>
- <div class="welcome-card"><div class="welcome-icon">✦</div><div style="flex:1"><strong>Po malých krocích</strong><p>Nejdřív si projdi kartičky. Až budeš chtít, vyzkoušej se z nich v kvízu.</p></div></div>
- <div class="sectiontitle" style="margin-top:27px"><h2>Tvůj přehled</h2><button class="mini-action" data-action="navigate" data-id="stats">Detail →</button></div>
- <div class="panel"><div class="row"><span class="progress-num">${pct}<span style="font-size:24px"> %</span></span><span class="small-muted">${nfmt(known)} / ${nfmt(total)} umím</span></div><div class="bar" style="margin:14px 0"><span style="width:${pct}%"></span></div><span class="small-muted">Pokrok se ukládá na tomto zařízení.</span></div>
- <p class="source-intro">Obsah vychází pouze ze dvou přiložených skript. U každé položky najdeš původní stránku; matematické symboly z automatického přepisu je třeba ověřovat v původních skriptech.</p>`;
+ const today=new Set(history.filter(x=>x.day===localDay()).map(x=>x.id)).size;const known=C.counts(all,progress).known;const saved=read(SESSION,null);const canResume=saved&&Array.isArray(saved.ids)&&saved.ids.length&&saved.index<saved.ids.length&&saved.ids.every(id=>byId.has(id));
+ $('#main').innerHTML=`<section class="animate-in"><div class="home-heading"><div><p class="eyebrow">LA1 / MA I</p><h1>Čemu se dnes<br>věnovat?</h1></div></div><div class="subjects">${['la','ma'].map((s,i)=>{const cards=data.cards.filter(c=>c.subject===s);return `<button class="subject-card ${s}" data-action="subject" data-subject="${s}"><div class="label-line"><span>0${i+1} / ${short[s]}</span><span>${pct(cards)} %</span></div><h2>${s==='la'?'Lineární<br>algebra':'Matematická<br>analýza'}</h2>${art(s)}<div class="subject-bottom"><span>${data.chapters.filter(c=>c.subject===s).length} kapitol · ${cards.length} karet</span><span class="arrow-circle">${icon('arrow')}</span></div></button>`;}).join('')}</div><div class="home-lower"><div class="home-stat"><span class="number">${today}</span><span><strong>Dnes projito</strong>${known} položek už umíš</span></div>${canResume?`<button class="resume-card" data-action="resume">${icon('book')}<span>Pokračovat<small>${short[saved.subject]} · ${saved.mode==='cards'?'kartičky':'kvíz'} · ${saved.index+1}/${saved.ids.length}</small></span>${icon('arrow')}</button>`:`<button class="resume-card" data-action="progress">${icon('chart')}<span>Tvůj pokrok<small>Statistiky a záloha</small></span>${icon('arrow')}</button>`}</div></section>`;
 }
-function filterSummary(){const ch=settings.subject==='both'?([...settings.chapters.an,...settings.chapters.la].length? 'Vybrané kapitoly':'Všechny kapitoly'):(settings.chapters[settings.subject].length?`${settings.chapters[settings.subject].length} vybr. kapitol`:'Všechny kapitoly');const t=settings.types.length===5?'Všechny typy':`${settings.types.length} typů`;return `${ch} · ${t}`}
-function preSessionPage(kind){const isQuiz=kind==='quiz', eligible=filtered(isQuiz?'quizzes':'cards');
- return `<div class="page-header"><div class="eyebrow">${isQuiz?'OTESTUJ, CO VÍŠ':'UČ SE VLASTNÍM TEMPEM'}</div><h1>${isQuiz?'Malý test.':'Kartičky.'}</h1><p>${isQuiz?'Doplň formulaci, vyřeš příklad nebo si zkus důkaz. Pak se ohodnoť.':'Nejdřív odpověz v hlavě. Pak otoč kartu a označ, co už umíš.'}</p></div>
- ${subChoices()}
- <div class="sectiontitle"><h2>Co si projít?</h2><span class="small-muted">${nfmt(eligible.length)} ${isQuiz?'otázek':'kartiček'}</span></div>
- <button class="filter-trigger" data-action="filters"><span>Výběr kapitol a filtrů<br><span class="small-muted">${filterSummary()}</span></span><span>${ico('sliders',20)}</span></button>
- <div class="sectiontitle"><h2>Typ látky</h2></div><div class="chiprow">${ALL_TYPES.map(t=>`<button class="chip ${settings.types.includes(t)?'selected':''}" data-action="toggle-type" data-id="${t}" aria-pressed="${settings.types.includes(t)}">${TYPE_NAMES[t]}</button>`).join('')}</div>
- <div class="sectiontitle" style="margin-top:26px"><h2>Podle toho, co umíš</h2></div><div class="chiprow">${[['all','Všechno'],['new','Nové'],['repeat','K opakování'],['know','Umím']].map(([id,label])=>`<button class="chip ${settings.status===id?'soft-selected':''}" data-action="status-filter" data-id="${id}" aria-pressed="${settings.status===id}">${label}</button>`).join('')}</div>
- ${isQuiz?`<div class="sectiontitle" style="margin-top:24px"><h2>Otázek v jedné sérii</h2></div><div class="chiprow">${[10,15,30,0].map(n=>`<button class="chip ${Number(settings.quizSize??15)===n?'selected':''}" data-action="quiz-size" data-id="${n}">${n||'Všechny'}</button>`).join('')}</div>`:''}
- <div style="margin:33px 0 5px"><button class="primary-btn" data-action="begin" data-id="${kind}" ${eligible.length?'':'disabled'}>${isQuiz?'Spustit kvíz':'Jdu na kartičky'} ${ico('arrow',17)}</button></div>
- <p class="hint">Náhodné pořadí, bez opakování v jedné sérii. ${isQuiz?'Výběrové možnosti jsou úryvky ze skript. Důkazy a příklady si zkusíš i sama.':'Odpovědi si hodnotíš sama podle originálu.'}</p>`;
+function summaries(f){const out=[];const chapters=data.chapters.filter(c=>c.subject===subject);if(f.chapters.length!==chapters.length)out.push(f.chapters.length===1?chapterName(f.chapters[0]):`${f.chapters.length} ${noun(f.chapters.length,'kapitola','kapitoly','kapitol')}`);if(f.types.length!==Object.keys(types).length)out.push(...f.types.map(t=>types[t]));if(f.statuses.length!==3)out.push(...f.statuses.map(s=>states[s]));if(f.query)out.push(`„${f.query}“`);return out;}
+function subjectPage(){
+ const f=getFilter(),items=filtered(),sum=summaries(f),chapters=data.chapters.filter(c=>c.subject===subject);
+ $('#main').innerHTML=`<section class="animate-in"><button class="back" data-action="home">${icon('back')} Předměty</button><div class="page-heading"><div><p class="eyebrow">${short[subject]}</p><h1>${names[subject]}</h1></div><span class="subject-tag">${subject==='la'?'A':'ƒ'}</span></div><div class="toolbar"><div class="segmented" role="group" aria-label="Způsob učení"><button data-action="mode" data-mode="cards" aria-pressed="${mode==='cards'}" class="${mode==='cards'?'selected':''}">Kartičky</button><button data-action="mode" data-mode="quiz" aria-pressed="${mode==='quiz'}" class="${mode==='quiz'?'selected':''}">Kvíz</button></div><button class="outline-button" data-action="filters">${icon('filter')} Filtry ${sum.length?`<span class="filter-count">${sum.length}</span>`:''}</button></div>${sum.length?`<div class="filter-summary">${sum.map(x=>`<span class="chip">${escape(x)}</span>`).join('')}</div>`:''}<div class="study-launch"><div><div class="serif">${items.length} ${itemNoun(items.length)}</div><p>${f.chapters.length===chapters.length?'Všechny kapitoly':f.chapters.length===1?escape(chapterName(f.chapters[0])):'Vlastní výběr'}</p></div><div class="launch-actions">${mode==='quiz'?`<select class="round-size" id="round-size" aria-label="Délka kvízu"><option value="10">10 otázek</option><option value="20">20 otázek</option><option value="0">Všechny</option></select>`:''}<button class="primary" data-action="start" ${!items.length?'disabled':''}>${mode==='cards'?'Otevřít karty':'Spustit kvíz'} ${icon('arrow')}</button></div></div>${!items.length?'<div class="empty"><p>Tomuto výběru nic neodpovídá.</p><button class="secondary" data-action="reset-filters">Zrušit filtry</button></div>':''}<div class="section-label"><span>Kapitoly</span><button data-action="all-chapters">Všechny kapitoly</button></div><div class="chapter-list">${chapters.map(c=>{const list=(mode==='cards'?data.cards:data.quizzes).filter(x=>x.chapter===c.id);const count=C.counts(list,progress);return `<button class="chapter" data-action="chapter" data-chapter="${c.id}"><span class="chapter-num">${String(c.number).padStart(2,'0')}</span><span class="chapter-title">${escape(c.title)}<small>${list.length} ${itemNoun(list.length)} · ${count.known} umím</small></span><span class="chapter-ring" style="--progress:${pct(list)}%" aria-hidden="true"></span>${icon('arrow')}</button>`;}).join('')}</div></section>`;
 }
-function sourceLink(c){return `<span class="source-link">Zdroj · strana ${Number(c.page)}</span>`}
-function cardAnswer(c){
- const safe=escapeHTML(c.answer||'').replace(/\n/g,'<br>');
- const note=c.subject==='an'&&c.image?'<p class="footnote">Automatický přepis. Matematické symboly mohou být nepřesné.</p>':'';
- return '<div class="answer-body '+(c.subject==='an'?'source-text':'')+'">'+(safe||'Přepis této položky není dostupný.')+'</div>'+note+sourceLink(c);
+function saveSession(){if(session)save(SESSION,session);}
+function start(items=filtered(),resume=false,limitOverride=null){
+ if(!items.length)return;
+ if(!resume){const size=limitOverride!==null?limitOverride:mode==='quiz'?Number($('#round-size')?.value??10):0;let ordered=C.shuffle(items);if(size>0)ordered=ordered.slice(0,size);session={subject,mode,ids:ordered.map(x=>x.id),index:0,results:[],optionOrders:{}};saveSession();}
+ revealed=false;selected=null;go('study');
 }
-function studyPage(){if(!session||session.kind!=='study')return preSessionPage('study');
- const id=session.ids[session.index],c=DATA.cards.find(c=>c.id===id);
- if(!c)return completion('study');
- const st=statusFor(c.id), pct=Math.round((session.index+1)/session.ids.length*100);
- return `<div class="page-header"><div class="eyebrow">${titleForSub(c.subject)} · ${c.chapter}. kapitola</div><h1 style="font-size:29px;margin-bottom:6px">${escapeHTML(c.chapterTitle)}</h1></div>
- <div class="count-line"><span>${session.index+1} z ${session.ids.length}</span><span>${studyRevealed?'Odpověď':'Otázka'}</span></div><div class="bar"><span style="width:${pct}%"></span></div>
- <div class="card-stage"><div class="flashcard ${studyRevealed?'revealed':''}" tabindex="0" role="button" data-action="flip" aria-label="${studyRevealed?'Kartička s odpovědí':'Otočit kartičku'}">
- <div class="card-kicker"><span>${escapeHTML(c.label)}</span><span style="font-size:17px;color:#b1bcaf">✳</span></div>
- ${studyRevealed?`<div style="width:100%">${cardAnswer(c)}</div>`:`<h2 class="card-title">${escapeHTML(c.question)}</h2>`}
- <div class="card-bottom"><span>${studyRevealed?'Označ si, jak to šlo':'Klepni a otoč'}</span><span>${st==='know'?'✓ Umím':st==='repeat'?'↻ Opakovat':'○ Nová'}</span></div></div></div>
- ${studyRevealed?`<div class="status-buttons"><button class="no" data-action="grade-study" data-id="repeat">↻ Ještě neumím</button><button class="yes" data-action="grade-study" data-id="know">✓ Umím</button></div>`:`<button class="primary-btn" data-action="flip">Ukázat odpověď</button>`}
- <div class="stack-ctrl"><button data-action="prev" ${session.index<=0?'disabled':''}>← Zpět</button><button data-action="quit">Ukončit sérii</button><button data-action="next">Přeskočit →</button></div>`;
+function studyPage(){
+ if(!session||session.index>=session.ids.length){resultPage();return;}
+ const item=byId.get(session.ids[session.index]);const chapter=chapterName(item.chapter);
+ if(!item){go('subject');return;}
+ $('#main').innerHTML=`<section class="session-wrap animate-in"><div class="session-top"><button class="back" data-action="exit-session">${icon('back')} ${short[subject]}</button><span class="counter">${session.index+1} <span aria-label="z">/</span> ${session.ids.length}</span><button class="icon-button" data-action="shuffle-session" aria-label="Zamíchat zbývající">${icon('shuffle')}</button></div><div class="progress-track" role="progressbar" aria-label="Průchod sadou" aria-valuenow="${session.index}" aria-valuemin="0" aria-valuemax="${session.ids.length}"><span style="width:${session.index/session.ids.length*100}%"></span></div><article class="study-card ${mode==='quiz'?'quiz-card':''}"><div class="card-meta"><span class="kind">${types[item.type]}</span><span>${escape(chapter)}</span></div><h2 class="card-question" id="question">${rich(item.question)}</h2>${mode==='cards'?(revealed?`<div class="answer"><div class="answer-label">Odpověď</div>${rich(item.answer)}${source(item)}</div>`:`<button class="primary reveal" data-action="reveal">Ukázat odpověď</button>`):`<div class="options" role="group" aria-label="Možnosti odpovědi">${getOptions(item).map((idx,pos)=>`<button class="option ${selected!==null?(idx===item.correct?'correct':idx===selected?'wrong':''):''}" data-action="answer" data-choice="${idx}" ${selected!==null?'disabled':''}><span class="option-letter">${selected!==null&&idx===item.correct?'✓':selected===idx?'×':String.fromCharCode(65+pos)}</span>${rich(item.options[idx])}${selected!==null&&idx===item.correct?'<span class="sr-only">Správná odpověď</span>':''}</button>`).join('')}</div>`}</article>${mode==='cards'&&revealed?`<div class="assessment"><button class="secondary" data-action="rate" data-status="learning">Ještě ne</button><button class="primary" data-action="rate" data-status="known">${icon('check')} Umím</button></div>`:''}${mode==='quiz'&&selected!==null?`<div class="quiz-explanation" role="status"><h3>${selected===item.correct?'Správně.':'Správná odpověď je označená.'}</h3>${rich(item.explanation)}${source(item)}</div><div class="quiz-bottom"><div class="confidence" aria-label="Vlastní hodnocení"><button data-action="confidence" data-status="learning" class="${C.status(progress,item.id)==='learning'?'active':''}" aria-pressed="${C.status(progress,item.id)==='learning'}">Ještě ne</button><button data-action="confidence" data-status="known" class="${C.status(progress,item.id)==='known'?'active':''}" aria-pressed="${C.status(progress,item.id)==='known'}">Umím</button></div><button class="primary" data-action="next">${session.index===session.ids.length-1?'Dokončit':'Další otázka'} ${icon('arrow')}</button></div>`:''}<div class="session-foot"><button class="text-button" data-action="undo" ${!session.results.length?'disabled':''}>${icon('undo')} Zpět</button><span class="key-hint">${mode==='cards'?'Mezerník · otočit &nbsp; 1 · ještě ne &nbsp; 2 · umím':'1–4 · odpověď &nbsp; Enter · další'}</span><button class="text-button" data-action="skip" ${selected!==null?'disabled':''}>Přeskočit ${icon('arrow')}</button></div></section>`;
 }
-function quizPage(){if(!session||session.kind!=='quiz')return preSessionPage('quiz');
- const id=session.ids[session.index],q=DATA.quizzes.find(q=>q.id===id);
- if(!q)return completion('quiz');
- const c=DATA.cards.find(c=>c.id===q.card);const pct=Math.round((session.index+1)/session.ids.length*100);
- if(q.format==='recall'){
-  return `<div class="page-header"><div class="eyebrow">KVÍZ · ${titleForSub(q.subject)}</div><h1 style="font-size:30px">Zkus to sama.</h1></div>
-  <div class="count-line"><span>Otázka ${session.index+1} / ${session.ids.length}</span><span>${escapeHTML(TYPE_NAMES[q.type])}</span></div><div class="bar"><span style="width:${pct}%"></span></div>
-  <div class="quiz-q"><div class="eyebrow">${escapeHTML(q.chapterTitle)}</div><h2>${escapeHTML(q.question)}</h2><span class="small-muted">Nejdřív si odpověz. Klidně na papír.</span></div>
-  ${studyRevealed?`<div class="panel">${cardAnswer(c)}</div><div class="status-buttons"><button class="no" data-action="grade-recall" data-id="repeat">↻ Procvičit</button><button class="yes" data-action="grade-recall" data-id="know">✓ Umím</button></div>`:`<button class="primary-btn" data-action="reveal-recall">Ukázat řešení ${ico('arrow',17)}</button>`}
-  <div class="stack-ctrl"><button data-action="next">Přeskočit →</button><button data-action="quit">Ukončit sérii</button></div>`;
- }
- const status=mcqAnswer;
- return `<div class="page-header"><div class="eyebrow">KVÍZ · ${titleForSub(q.subject)}</div><h1 style="font-size:30px">Jeden po druhém.</h1></div>
- <div class="count-line"><span>Otázka ${session.index+1} / ${session.ids.length}</span><span>${escapeHTML(TYPE_NAMES[q.type])}</span></div><div class="bar"><span style="width:${pct}%"></span></div>
- <div class="quiz-q"><div class="eyebrow">${escapeHTML(q.chapterTitle)}</div><h2>${escapeHTML(q.question)}</h2><div class="small-muted">Vyber jednu možnost</div></div>
- <div class="options">${q.options.map((o,j)=>`<button class="option ${status?(o.id===q.correct?'correct':status===o.id?'wrong':''):''}" data-action="answer-quiz" data-id="${escapeHTML(o.id)}" ${status?'disabled':''} aria-label="Možnost ${j+1}"><span class="opt-letter">${'ABCD'[j]}</span><span class="opt-text">${escapeHTML(o.text)}</span></button>`).join('')}</div>
- ${status?`<div class="result-note"><strong>${status===q.correct?'Správně!':'Tentokrát ne.'}</strong><p>${escapeHTML(c.answer)}</p>${sourceLink(c)}</div><div class="status-buttons"><button class="no" data-action="grade-quiz" data-id="repeat">↻ Procvičit</button><button class="yes" data-action="grade-quiz" data-id="know">✓ Umím</button></div><button class="primary-btn" data-action="next">Další otázka ${ico('arrow',17)}</button>`:''}
- <div class="stack-ctrl"><button data-action="next">Přeskočit →</button><button data-action="quit">Ukončit sérii</button></div>`;
+function getOptions(item){if(!session.optionOrders[item.id]){session.optionOrders[item.id]=C.shuffle(item.options.map((_,i)=>i));saveSession();}return session.optionOrders[item.id];}
+function rate(status){if(!revealed)return;const id=session.ids[session.index],previous=mark(id,status);session.results.push({id,previous,status,skipped:false});advance();}
+function answer(idx){if(selected!==null)return;const item=byId.get(session.ids[session.index]);if(!Number.isInteger(idx)||idx<0||idx>=item.options.length)return;selected=idx;const correct=idx===item.correct,previous=mark(item.id,correct?'known':'learning');session.results.push({id:item.id,previous,status:correct?'known':'learning',correct,choice:idx,skipped:false});session.pending=idx;saveSession();render(false);}
+function advance(){session.index++;delete session.pending;revealed=false;selected=null;saveSession();if(session.index>=session.ids.length){view='result';shell();resultPage();window.scrollTo({top:0});}else render();}
+function undo(){
+ const result=session.results.pop();if(!result)return;
+ if(result.previous)progress[result.id]=result.previous;else delete progress[result.id];
+ if(!result.skipped){const i=history.findLastIndex(x=>x.id===result.id);if(i!==-1)history.splice(i,1);}
+ if(selected===null)session.index=Math.max(0,session.index-1);
+ delete session.pending;revealed=mode==='cards';selected=null;persist();saveSession();render();
 }
-function completion(kind){const isQuiz=kind==='quiz';let answered=0,correct=0;for(const id of session?.ids||[]){const p=(isQuiz?progress.quizzes:progress.cards)[id];if(p){answered++;if(p.status==='know')correct++}}
- return `<div class="end"><div class="end-symbol">✳</div><div class="eyebrow">HOTOVO</div><h2>Pro dnešek dobrá práce.</h2><p>Prošla jsi celou vybranou sadu, bez opakování položek.</p><div class="stat-grid"><div class="stat-box"><strong>${session.ids.length}</strong><span>${isQuiz?'otázek':'kartiček'} v sérii</span></div><div class="stat-box"><strong>${correct}</strong><span>označeno „umím“</span></div></div><button class="primary-btn" data-action="restart">Nová série ${ico('arrow',18)}</button><div style="height:10px"></div><button class="secondary-btn" style="width:100%" data-action="quit">Zpět k výběru</button></div>`;
+function resultPage(){view='result';const graded=session.results.filter(r=>!r.skipped);const known=graded.filter(r=>mode==='quiz'?r.correct:r.status==='known').length;const skipped=session.results.filter(r=>r.skipped).length;const weak=session.results.filter(r=>!r.skipped&&(mode==='quiz'?(!r.correct||r.status!=='known'):r.status!=='known')).map(r=>byId.get(r.id));$('#main').innerHTML=`<section class="round-result animate-in"><div class="result-art">${icon('check')}</div><p class="eyebrow" style="margin-bottom:15px">${short[subject]} · ${mode==='cards'?'kartičky':'kvíz'}</p><h1>Sada dokončena.</h1><div class="result-stats"><div><strong>${known}<span class="sr-only"> z ${graded.length}</span></strong><span>${mode==='quiz'?'správně':'umím'}</span></div><div><strong>${graded.length-known}</strong><span>${mode==='quiz'?'nesprávně':'ještě ne'}</span></div>${skipped?`<div><strong>${skipped}</strong><span>přeskočeno</span></div>`:''}</div><div class="result-actions">${weak.length?`<button class="primary" data-action="retry-weak">Znovu obtížné (${weak.length}) ${icon('arrow')}</button>`:''}<button class="${weak.length?'outline-button':'primary'}" data-action="exit-session">Zpět na kapitoly</button></div></section>`;}
+function progressPage(){
+ const total=C.counts(all,progress),today=new Set(history.filter(x=>x.day===localDay()).map(x=>x.id)).size;
+ $('#main').innerHTML=`<section class="animate-in"><div class="page-heading"><div><p class="eyebrow">Kartičky & kvízy</p><h1>Tvůj pokrok.</h1></div></div><div class="stats-grid"><div class="stat-box"><strong>${total.known}</strong><span>Umím</span></div><div class="stat-box"><strong>${total.learning}</strong><span>Ještě ne</span></div><div class="stat-box"><strong>${today}</strong><span>Dnes projito</span></div></div><div class="progress-subjects">${['la','ma'].map(s=>`<div class="progress-panel" style="--accent:${s==='la'?'#315b4e':'#805f4c'}"><p class="eyebrow" style="margin-bottom:11px">${short[s]}</p><h2>${names[s]}</h2>${['cards','quizzes'].map(key=>{const items=data[key].filter(x=>x.subject===s),ct=C.counts(items,progress);return `<div class="metric"><div><span>${key==='cards'?'Kartičky':'Kvízy'}</span><small>${ct.known} / ${items.length} umím</small></div><div class="progress-track"><span style="width:${pct(items)}%"></span></div></div>`;}).join('')}</div>`).join('')}</div><div class="backup"><p>Pokrok zůstává v tomto zařízení. Pro přenos nebo bezpečnou zálohu ho ulož do souboru.</p><div class="backup-actions"><button class="outline-button" data-action="export">${icon('download')} Uložit zálohu</button><button class="outline-button" data-action="import">${icon('upload')} Obnovit</button><input class="file-input" id="backup-file" type="file" accept="application/json,.json"></div></div></section>`;
+ $('#backup-file').onchange=importFile;
 }
-function stats(){const known=DATA.cards.filter(c=>statusFor(c.id)==='know').length,repeat=DATA.cards.filter(c=>statusFor(c.id)==='repeat').length;
- const answered=DATA.cards.filter(c=>statusFor(c.id)!=='new').length;return `<div class="page-header"><div class="eyebrow">TVŮJ TEMPO</div><h1>Pokrok.</h1><p>Nejde o známky. Jen přehled, co už máš v hlavě.</p></div>
- <div class="stat-grid"><div class="stat-box"><strong>${nfmt(known)}</strong><span>Kartiček umím</span></div><div class="stat-box"><strong>${nfmt(repeat)}</strong><span>Chci opakovat</span></div><div class="stat-box"><strong>${nfmt(answered)}</strong><span>Kartiček prohlédnuto</span></div><div class="stat-box"><strong>${nfmt(progress.totalAnswers||0)}</strong><span>Celkem hodnocení</span></div></div>
- ${DATA.sources.map(source=>{
- const local=DATA.cards.filter(c=>c.subject===source.id),lk=local.filter(c=>statusFor(c.id)==='know').length,p=Math.round(lk/local.length*100);
- return `<div class="sectiontitle" style="margin-top:25px"><h2>${source.name}</h2><span class="small-muted">${p} %</span></div><div class="bar"><span style="width:${p}%"></span></div><div class="panel">${source.chapters.map(ch=>{
- const cs=local.filter(c=>c.chapter===ch.id),done=cs.filter(c=>statusFor(c.id)==='know').length;
- return `<div class="chapter-row"><span class="chapter-number">${ch.id}</span><span class="chapter-copy"><strong>${escapeHTML(ch.name)}</strong><span>${done} / ${cs.length} umím</span></span><div class="bar"><span style="width:${cs.length?Math.round(done/cs.length*100):0}%"></span></div></div>`;
- }).join('')}</div>`;
- }).join('')}
- <button class="secondary-btn" style="width:100%" data-action="settings">Exportovat / importovat pokrok</button><p class="footnote">Data jsou uložená v úložišti této aplikace na daném zařízení. Nemusí se přenést do jiného telefonu ani mezi Safari a samostatně přidanou aplikací.</p>`;
+function go(target){view=target;const hash=target==='home'?'#':target==='progress'?'#pokrok':`#${subject}`;if(location.hash!==hash)window.history.pushState(null,'',hash);render();}
+function render(scroll=true){theme();shell();if(view==='home')home();else if(view==='subject')subjectPage();else if(view==='progress')progressPage();else if(view==='study')studyPage();else resultPage();if(scroll)window.scrollTo({top:0});}
+let dialogReturn=null;
+function showDialog(html){const d=$('#dialog'),wasOpen=d.open,focused=document.activeElement?.dataset?.action;if(!wasOpen)dialogReturn=document.activeElement;d.innerHTML=html;if(!wasOpen)d.showModal();else if(focused)d.querySelector(`[data-action="${focused}"]`)?.focus();}
+function closeDialog(){const d=$('#dialog');d.close();dialogReturn?.focus?.();}
+function filters(){draft=structuredClone(getFilter());showFilterDialog();}
+function showFilterDialog(){const chapters=data.chapters.filter(c=>c.subject===subject);showDialog(`<div class="dialog-head"><h2>Tvůj výběr</h2><button class="icon-button" data-action="close-dialog" aria-label="Zavřít">${icon('close')}</button></div><div class="dialog-body"><input class="search" id="filter-query" type="search" placeholder="Najít pojem…" aria-label="Najít pojem" value="${escape(draft.query)}"><fieldset><legend>Kapitoly <button data-action="toggle-chapters">${draft.chapters.length===chapters.length?'Zrušit výběr':'Vybrat vše'}</button></legend><div class="chapter-options">${chapters.map(c=>`<label class="filter-option"><input type="checkbox" data-filter="chapters" value="${c.id}" ${draft.chapters.includes(c.id)?'checked':''}>${c.number}. ${escape(c.title)}</label>`).join('')}</div></fieldset><fieldset><legend>Typ</legend><div class="filter-options">${Object.entries(types).map(([key,label])=>`<label class="filter-option"><input type="checkbox" data-filter="types" value="${key}" ${draft.types.includes(key)?'checked':''}>${label}</label>`).join('')}</div></fieldset><fieldset><legend>Jak to jde</legend><div class="filter-options">${Object.entries(states).map(([key,label])=>`<label class="filter-option"><input type="checkbox" data-filter="statuses" value="${key}" ${draft.statuses.includes(key)?'checked':''}>${label}</label>`).join('')}</div></fieldset></div><div class="dialog-foot"><button class="text-button" data-action="clear-draft">Obnovit</button><button class="primary" data-action="apply-filters" id="filter-apply"></button></div>`);updateFilterCount();$('#filter-query').oninput=e=>{draft.query=e.target.value;updateFilterCount();};$('#dialog').onchange=e=>{const key=e.target.dataset.filter;if(!key)return;draft[key]=[...$('#dialog').querySelectorAll(`[data-filter="${key}"]:checked`)].map(el=>el.value);updateFilterCount();};}
+function updateFilterCount(){const n=C.filter(mode==='cards'?data.cards:data.quizzes,draft,progress).length;$('#filter-apply').textContent=`Zobrazit ${n} ${itemNoun(n,true)}`;}
+function about(){showDialog(`<div class="dialog-head"><h2>O Matice</h2><button class="icon-button" data-action="close-dialog" aria-label="Zavřít">${icon('close')}</button></div><div class="dialog-body info"><p>Kartičky a kvízy z tvých dvou skript. U každé odpovědi najdeš odkaz na originál. Důkazy jsou zapsané po hlavních krocích.</p><h3>Lineární algebra 1</h3><p>Libor Barto, Jiří Tůma · verze 30. 9. 2025.<br>Kapitoly 1–7, strany 5–251.<br><a href="skripta_la1.pdf" target="_blank" rel="noopener">Otevřít skripta LA1 ↗</a></p><h3>Matematická analýza I</h3><p>Martin Rmoutil · 3. 10. 2023.<br>Všech 6 kapitol dodaného PDF pro NMTM101.<br><a href="MA1.pdf" target="_blank" rel="noopener">Otevřít skripta MA I ↗</a></p><h3>Na plochu iPhonu</h3><p>V Safari otevři Sdílet → Přidat na plochu. Po prvním načtení lze používat i offline.</p><h3>Pokrok</h3><p>Ukládá se jen v tomto prohlížeči. Mezi zařízeními ho přeneseš přes zálohu v Pokroku. Kartičky a kvízy mají samostatné hodnocení. Filtr „Umím“ vychází z posledního hodnocení.</p><p class="tiny muted">${data.cards.length} karet · ${data.quizzes.length} kvízových otázek · verze 2</p></div>`);}
+function exportProgress(){const blob=new Blob([JSON.stringify({app:'matika-mff',version:2,exportedAt:new Date().toISOString(),progress,history},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`matika-pokrok-${localDay()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);}
+async function importFile(e){const file=e.target.files[0];if(!file)return;try{if(file.size>5e6)throw Error('Záloha je příliš velká.');const raw=JSON.parse(await file.text()),incoming=C.validateImport(raw,all.map(x=>x.id));let count=0;for(const [id,v] of Object.entries(incoming)){if(!progress[id]||v.updated>progress[id].updated){progress[id]=v;count++;}}history=C.mergeHistory(history,C.validateHistory(raw.history,all.map(x=>x.id)));persist();render(false);toast(`Záloha načtena. Obnoveno ${count} položek.`);}catch(error){toast(error instanceof SyntaxError?'Soubor není platná JSON záloha.':error.message);}finally{e.target.value='';}}
+async function action(e){const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action;
+ if(a==='home'){go('home');return;}if(a==='progress'){go('progress');return;}if(a==='about'){about();return;}if(a==='close-dialog'){closeDialog();return;}
+ if(a==='subject'){subject=el.dataset.subject;mode='cards';go('subject');return;}
+ if(a==='mode'){mode=el.dataset.mode;render(false);return;}
+ if(a==='filters'){filters();return;}if(a==='clear-draft'){draft=defaultFilter(subject);showFilterDialog();return;}
+ if(a==='toggle-chapters'){const ids=defaultFilter(subject).chapters;draft.chapters=draft.chapters.length===ids.length?[]:ids;showFilterDialog();return;}
+ if(a==='apply-filters'){setFilter(draft);closeDialog();render(false);$('[data-action="filters"]')?.focus();return;}
+ if(a==='reset-filters'){setFilter(defaultFilter(subject));render(false);return;}
+ if(a==='all-chapters'){const f=getFilter();f.chapters=defaultFilter(subject).chapters;setFilter(f);render(false);return;}
+ if(a==='chapter'){const f=getFilter();f.chapters=[el.dataset.chapter];setFilter(f);render();return;}
+ if(a==='start'){start();return;}
+ if(a==='resume'){const s=read(SESSION,null);if(s&&s.ids.every(id=>byId.has(id))){session=s;subject=s.subject;mode=s.mode;selected=s.pending??null;revealed=false;go('study');}return;}
+ if(a==='exit-session'){saveSession();go('subject');return;}
+ if(a==='reveal'){revealed=true;render(false);return;}
+ if(a==='rate'){rate(el.dataset.status);return;}
+ if(a==='answer'){answer(Number(el.dataset.choice));return;}
+ if(a==='next'){if(selected!==null)advance();return;}
+ if(a==='confidence'){const id=session.ids[session.index];progress[id].status=el.dataset.status;progress[id].updated=Date.now();session.results[session.results.length-1].status=el.dataset.status;persist();saveSession();render(false);return;}
+ if(a==='undo'){undo();return;}
+ if(a==='skip'){if(selected!==null)return;session.results.push({id:session.ids[session.index],previous:progress[session.ids[session.index]]?{...progress[session.ids[session.index]]}:null,skipped:true});advance();return;}
+ if(a==='shuffle-session'){if(selected!==null){toast('Nejdřív přejdi na další otázku.');return;}session.ids=[...session.ids.slice(0,session.index),...C.shuffle(session.ids.slice(session.index))];revealed=false;saveSession();render();toast('Zbývající položky promíchané.');return;}
+ if(a==='retry-weak'){const items=session.results.filter(r=>!r.skipped&&(mode==='quiz'?(!r.correct||r.status!=='known'):r.status!=='known')).map(r=>byId.get(r.id));start(items,false,0);return;}
+ if(a==='export'){exportProgress();return;}if(a==='import'){$('#backup-file').click();return;}
 }
-function filterSheet(){if(!draft)draft=clone(settings);const subjects=draft.subject==='both'?DATA.sources:DATA.sources.filter(s=>s.id===draft.subject);
- return `<div class="modal-backdrop" data-action="close-backdrop"><div class="sheet" role="dialog" aria-modal="true" aria-label="Výběr filtrů"><div class="row"><h2 class="sheet-title">Tvůj výběr</h2><button class="round-close" data-action="close-modal" aria-label="Zavřít">×</button></div>
- ${subjects.map(s=>`<div class="sheet-section"><div class="row"><strong>${s.name}</strong><button class="mini-action" data-action="all-chapters" data-id="${s.id}">${(draft.chapters[s.id]||[]).length?'Vybrat všechny':'Všechny vybrány'}</button></div><div class="chiprow">${s.chapters.map(ch=>`<button class="chip ${(draft.chapters[s.id]||[]).includes(ch.id)?'selected':''}" data-action="chapter" data-id="${s.id}:${ch.id}">${ch.id}. ${escapeHTML(ch.name)}</button>`).join('')}</div></div>`).join('')}
- <div class="sheet-section"><div class="row"><strong>Typ karet</strong><button class="mini-action" data-action="all-types">Všechny</button></div><div class="chiprow">${ALL_TYPES.map(t=>`<button class="chip ${draft.types.includes(t)?'selected':''}" data-action="draft-type" data-id="${t}">${TYPE_NAMES[t]}</button>`).join('')}</div></div>
- <div class="sheet-section"><strong>Co chceš opakovat?</strong><div class="chiprow" style="margin-top:10px">${[['all','Všechno'],['new','Nové'],['repeat','K opakování'],['know','Umím']].map(([id,label])=>`<button class="chip ${draft.status===id?'soft-selected':''}" data-action="draft-status" data-id="${id}">${label}</button>`).join('')}</div></div>
- <div class="sheet-footer"><button class="primary-btn" data-action="apply-filters">Použít filtry ${ico('arrow',16)}</button></div></div></div>`;
-}
-function settingsSheet(){return `<div class="modal-backdrop" data-action="close-backdrop"><div class="sheet" role="dialog" aria-modal="true" aria-label="Záloha pokroku"><div class="row"><h2 class="sheet-title">Tvoje data</h2><button class="round-close" data-action="close-modal" aria-label="Zavřít">×</button></div>
- <p class="small-muted" style="line-height:1.6">Pokrok se ukládá pouze v tomto prohlížeči nebo v aplikaci přidané na plochu. Pro přenos do jiného zařízení vyexportuj zálohu.</p>
- <div class="setting-list" style="margin-top:24px"><button class="secondary-btn" data-action="export">↓ Exportovat JSON</button><button class="secondary-btn" data-action="import">↑ Importovat JSON</button></div>
- <input type="file" id="backup-file" accept="application/json,.json" style="display:none" aria-label="Soubor se zálohou"/>
- <hr class="separator"/><div class="row"><span class="small-muted">Smazání pokroku na tomto zařízení</span><button class="mini-action" data-action="reset" style="color:#a46a64">Vymazat</button></div>
- <hr class="separator"/><p class="footnote">Neobsahuje žádné účty ani reklamní sledování. Původní PDF nejsou veřejnou součástí aplikace. Pokud přepis obsahuje nejasný vzorec, ověř ho v původních skriptech.</p></div></div>`}
-function empty(){return `<div class="no-data"><h3>Pro tenhle výběr nic není.</h3><p>Uprav kapitoly nebo typy karet.</p><button class="secondary-btn" data-action="filters">Změnit filtry</button></div>`}
-function render(){const root=$('#app');if(!root)return;let content='';if(view==='home')content=home();else if(view==='study')content=session?.kind==='study'?studyPage():preSessionPage('study');else if(view==='quiz')content=session?.kind==='quiz'?quizPage():preSessionPage('quiz');else content=stats();root.innerHTML=`<main class="app">${topbar()}${content}${navigation()}</main>${overlay==='filters'?filterSheet():overlay==='settings'?settingsSheet():''}${zoomSrc?`<div class="zoom"><button data-action="unzoom">Zavřít ✕</button><img alt="Přiblížené znění skript" src="${escapeHTML(zoomSrc)}"/></div>`:''}`;}
-function resetSession(){session=null;mcqAnswer=null;studyRevealed=false}
-function go(to){view=to;resetSession();overlay=null;render();window.scrollTo(0,0)}
-function begin(kind){const pool=filtered(kind==='quiz'?'quizzes':'cards');if(!pool.length){toast('Pro tento výběr nic není.');return}session={kind,ids:shuffle(pool.map(c=>c.id)).slice(0,kind==='quiz'&&Number(settings.quizSize??15)>0?Number(settings.quizSize??15):undefined),index:0};mcqAnswer=null;studyRevealed=false;view=kind;render();window.scrollTo(0,0)}
-function next(){if(!session)return;session.index++;studyRevealed=false;mcqAnswer=null;render();window.scrollTo(0,0)}
-function prev(){if(!session)return;session.index=Math.max(0,session.index-1);studyRevealed=false;mcqAnswer=null;render()}
-function handleAction(action,id,el){
- switch(action){
- case 'navigate':go(id);return;
- case 'choose-study':settings.subject=id;settings.chapters[id]=[];persistSettings();go('study');return;
- case 'subject':settings.subject=id;persistSettings();render();return;
- case 'toggle-type':settings.types=settings.types.includes(id)?settings.types.filter(x=>x!==id):[...settings.types,id];persistSettings();render();return;
- case 'status-filter':settings.status=id;persistSettings();render();return;
- case 'quiz-size':settings.quizSize=Number(id);persistSettings();render();return;
- case 'filters':draft=clone(settings);overlay='filters';render();return;
- case 'settings':overlay='settings';render();return;
- case 'close-modal':overlay=null;render();return;
- case 'close-backdrop':if(el.classList.contains('modal-backdrop')){overlay=null;render()}return;
- case 'chapter':{const [sub,num]=id.split(':'),ch=Number(num),all=chaptersFor(sub).map(x=>x.id);let selected=[...draft.chapters[sub]];selected=selected.includes(ch)?selected.filter(x=>x!==ch):[...selected,ch];draft.chapters[sub]=(!selected.length||selected.length===all.length)?[]:selected;render();return}
- case 'all-chapters':draft.chapters[id]=[];render();return;
- case 'all-types':draft.types=[...ALL_TYPES];render();return;
- case 'draft-type':draft.types=draft.types.includes(id)?draft.types.filter(x=>x!==id):[...draft.types,id];render();return;
- case 'draft-status':draft.status=id;render();return;
- case 'apply-filters':settings=clone(draft);overlay=null;persistSettings();render();return;
- case 'begin':begin(id);return;
- case 'flip':studyRevealed=!studyRevealed;render();return;
- case 'grade-study':if(session&&session.kind==='study'){remember(session.ids[session.index],id);next()}return;
- case 'reveal-recall':studyRevealed=true;render();return;
- case 'grade-recall':if(session&&session.kind==='quiz'){const q=DATA.quizzes.find(q=>q.id===session.ids[session.index]);remember(q.id,id,true);remember(q.card,id,false);next()}return;
- case 'answer-quiz':if(session&&!mcqAnswer){mcqAnswer=id;const q=DATA.quizzes.find(q=>q.id===session.ids[session.index]);remember(q.id,id===q.correct?'know':'repeat',true);render()}return;
- case 'grade-quiz':if(session&&session.kind==='quiz'){const q=DATA.quizzes.find(q=>q.id===session.ids[session.index]);remember(q.card,id,false);if(progress.quizzes[q.id]){progress.quizzes[q.id].status=id;persist()}next()}return;
- case 'next':next();return;
- case 'prev':prev();return;
- case 'quit':resetSession();render();window.scrollTo(0,0);return;
- case 'restart':begin(view);return;
- case 'zoom':zoomSrc=el.getAttribute('src');render();return;
- case 'unzoom':zoomSrc=null;render();return;
- case 'export':exportData();return;
- case 'import':$('#backup-file')?.click();return;
- case 'reset':if(confirm('Opravdu vymazat veškerý pokrok z tohoto zařízení?')){progress={cards:{},quizzes:{},history:{},totalAnswers:0};persist();resetSession();overlay=null;render();toast('Pokrok vymazán.')}return;
- }
-}
-function exportData(){const dump=JSON.stringify({app:'matika',formatVersion:2,exportedAt:new Date().toISOString(),progress},null,2);const blob=new Blob([dump],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`matika-zaloha-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('Záloha připravena ke stažení.');}
-async function importData(file){if(!file)return;try{const raw=await file.text();if(raw.length>15e6)throw Error('Soubor je příliš velký');const d=JSON.parse(raw);if(d.app!=='matika'||!d.progress||typeof d.progress.cards!=='object'||typeof d.progress.quizzes!=='object')throw Error('Tohle není platná záloha Matiky.');if(!confirm('Nahradit současný pokrok obsahem zálohy?'))return;
- progress={cards:d.progress.cards,quizzes:d.progress.quizzes,history:d.progress.history||{},totalAnswers:Number(d.progress.totalAnswers)||0};persist();overlay=null;resetSession();render();toast('Záloha byla obnovena.');}catch(e){alert('Import se nezdařil: '+e.message)}}
-function eventBindings(){document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el)return;if(el.closest('a[href]'))return;const action=el.dataset.action;if(action==='flip'&&e.target.closest('a,button,details,img'))return;handleAction(action,el.dataset.id,el)});document.addEventListener('change',e=>{if(e.target.id==='backup-file')importData(e.target.files?.[0])});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&(overlay||zoomSrc)){zoomSrc=null;overlay=null;render()}else if((e.key==='Enter'||e.key===' ')&&e.target.classList?.contains('flashcard')){e.preventDefault();studyRevealed=!studyRevealed;render()}});}
-async function boot(){eventBindings();try{const r=await fetch('./content.json',{cache:'no-cache'});if(!r.ok)throw Error('Data se nepodařilo načíst.');DATA=await r.json();if(!DATA.cards?.length||!DATA.sources?.length)throw Error('Chybí učební materiály.');for(const source of DATA.sources){const valid=new Set(source.chapters.map(ch=>ch.id));settings.chapters[source.id]=(settings.chapters[source.id]||[]).filter(id=>valid.has(id));}persistSettings();render();if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js',{scope:'./'}).catch(()=>{});}catch(e){$('#app').innerHTML=`<div class="app"><div class="page-header"><h1>Ach, něco se nenačetlo.</h1><p>${escapeHTML(e.message)}</p><p>Otevři aplikaci přes GitHub Pages nebo místní HTTP server, ne přímo jako soubor.</p></div></div>`}}
-boot();
+document.addEventListener('click',action);
+$('#dialog').addEventListener('click',e=>{if(e.target===$('#dialog')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeDialog();}});
+document.addEventListener('keydown',e=>{if(e.altKey||e.ctrlKey||e.metaKey||$('#dialog').open||['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.target.tagName)||view!=='study')return;
+ if(mode==='cards'){if(e.code==='Space'){e.preventDefault();revealed=!revealed;render(false);}else if(revealed&&['1','2'].includes(e.key)){e.preventDefault();rate(e.key==='2'?'known':'learning');}}
+ else if(selected===null&&/^[1-4]$/.test(e.key)){e.preventDefault();const item=byId.get(session.ids[session.index]);answer(getOptions(item)[Number(e.key)-1]);}else if(selected!==null&&e.key==='Enter'){e.preventDefault();advance();}
+});
+function route(){const hash=location.hash.slice(1);if(hash==='pokrok')view='progress';else if(['la','ma'].includes(hash)){subject=hash;view='subject';}else view='home';render();}
+window.addEventListener('popstate',route);window.addEventListener('online',shell);window.addEventListener('offline',shell);route();
+if('serviceWorker'in navigator&&location.protocol!=='file:'){navigator.serviceWorker.register('service-worker.js').then(reg=>reg.update()).catch(error=>console.warn('Offline cache:',error.message));}
+})();
