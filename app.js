@@ -75,7 +75,7 @@ function preSessionPage(kind){const isQuiz=kind==='quiz', eligible=filtered(isQu
  <div style="margin:33px 0 5px"><button class="primary-btn" data-action="begin" data-id="${kind}" ${eligible.length?'':'disabled'}>${isQuiz?'Spustit kvíz':'Jdu na kartičky'} ${ico('arrow',17)}</button></div>
  <p class="hint">Náhodné pořadí, bez opakování v jedné sérii. ${isQuiz?'Výběrové možnosti jsou úryvky ze skript. Důkazy a příklady si zkusíš i sama.':'Odpovědi si hodnotíš sama podle originálu.'}</p>`;
 }
-function sourceLink(c){return `<a class="source-link" href="${safePDF(c)}" target="_blank" rel="noopener noreferrer">↗ Originál · s. ${c.page}</a>`}
+function sourceLink(c){return `<span class="source-link">Zdroj · strana ${Number(c.page)}</span>`}
 function cardAnswer(c){const img=c.image?`<img class="source-img" data-action="zoom" src="./${escapeHTML(c.image)}" alt="Přesný výřez ze skript, strana ${c.page}" loading="lazy"/>`:'';
  const text=`<div class="answer-body ${c.subject==='an'?'source-text':''}">${escapeHTML(c.answer)}</div>`;
  return `${c.subject==='an'&&img?`<div class="small-muted" style="margin-top:15px">Přesné znění ve skriptech</div>${img}<details><summary class="mini-action">Strojový přepis (může zkreslit vzorce)</summary>${text}</details>`:text}${sourceLink(c)}`;
