@@ -61,7 +61,7 @@ function home(){
  <div class="welcome-card"><div class="welcome-icon">✦</div><div style="flex:1"><strong>Po malých krocích</strong><p>Nejdřív si projdi kartičky. Až budeš chtít, vyzkoušej se z nich v kvízu.</p></div></div>
  <div class="sectiontitle" style="margin-top:27px"><h2>Tvůj přehled</h2><button class="mini-action" data-action="navigate" data-id="stats">Detail →</button></div>
  <div class="panel"><div class="row"><span class="progress-num">${pct}<span style="font-size:24px"> %</span></span><span class="small-muted">${nfmt(known)} / ${nfmt(total)} umím</span></div><div class="bar" style="margin:14px 0"><span style="width:${pct}%"></span></div><span class="small-muted">Pokrok se ukládá na tomto zařízení.</span></div>
- <p class="source-intro">Obsah vychází pouze ze dvou přiložených skript. U každé položky najdeš původní stránku; v případě nejasného matematického zápisu má přednost PDF.</p>`;
+ <p class="source-intro">Obsah vychází pouze ze dvou přiložených skript. U každé položky najdeš původní stránku; matematické symboly z automatického přepisu je třeba ověřovat v původních skriptech.</p>`;
 }
 function filterSummary(){const ch=settings.subject==='both'?([...settings.chapters.an,...settings.chapters.la].length? 'Vybrané kapitoly':'Všechny kapitoly'):(settings.chapters[settings.subject].length?`${settings.chapters[settings.subject].length} vybr. kapitol`:'Všechny kapitoly');const t=settings.types.length===5?'Všechny typy':`${settings.types.length} typů`;return `${ch} · ${t}`}
 function preSessionPage(kind){const isQuiz=kind==='quiz', eligible=filtered(isQuiz?'quizzes':'cards');
@@ -76,9 +76,10 @@ function preSessionPage(kind){const isQuiz=kind==='quiz', eligible=filtered(isQu
  <p class="hint">Náhodné pořadí, bez opakování v jedné sérii. ${isQuiz?'Výběrové možnosti jsou úryvky ze skript. Důkazy a příklady si zkusíš i sama.':'Odpovědi si hodnotíš sama podle originálu.'}</p>`;
 }
 function sourceLink(c){return `<span class="source-link">Zdroj · strana ${Number(c.page)}</span>`}
-function cardAnswer(c){const img=c.image?`<img class="source-img" data-action="zoom" src="./${escapeHTML(c.image)}" alt="Přesný výřez ze skript, strana ${c.page}" loading="lazy"/>`:'';
- const text=`<div class="answer-body ${c.subject==='an'?'source-text':''}">${escapeHTML(c.answer)}</div>`;
- return `${c.subject==='an'&&img?`<div class="small-muted" style="margin-top:15px">Přesné znění ve skriptech</div>${img}<details><summary class="mini-action">Strojový přepis (může zkreslit vzorce)</summary>${text}</details>`:text}${sourceLink(c)}`;
+function cardAnswer(c){
+ const safe=escapeHTML(c.answer||'').replace(/\n/g,'<br>');
+ const note=c.subject==='an'&&c.image?'<p class="footnote">Automatický přepis. Matematické symboly mohou být nepřesné.</p>':'';
+ return '<div class="answer-body '+(c.subject==='an'?'source-text':'')+'">'+(safe||'Přepis této položky není dostupný.')+'</div>'+note+sourceLink(c);
 }
 function studyPage(){if(!session||session.kind!=='study')return preSessionPage('study');
  const id=session.ids[session.index],c=DATA.cards.find(c=>c.id===id);
@@ -109,7 +110,7 @@ function quizPage(){if(!session||session.kind!=='quiz')return preSessionPage('qu
  <div class="count-line"><span>Otázka ${session.index+1} / ${session.ids.length}</span><span>${escapeHTML(TYPE_NAMES[q.type])}</span></div><div class="bar"><span style="width:${pct}%"></span></div>
  <div class="quiz-q"><div class="eyebrow">${escapeHTML(q.chapterTitle)}</div><h2>${escapeHTML(q.question)}</h2><div class="small-muted">Vyber jednu možnost</div></div>
  <div class="options">${q.options.map((o,j)=>`<button class="option ${status?(o.id===q.correct?'correct':status===o.id?'wrong':''):''}" data-action="answer-quiz" data-id="${escapeHTML(o.id)}" ${status?'disabled':''} aria-label="Možnost ${j+1}"><span class="opt-letter">${'ABCD'[j]}</span><span class="opt-text">${escapeHTML(o.text)}</span></button>`).join('')}</div>
- ${status?`<div class="result-note"><strong>${status===q.correct?'Správně!':'Tentokrát ne.'}</strong><p>${escapeHTML(c.answer)}</p>${c.image?`<img class="source-img" data-action="zoom" src="./${escapeHTML(c.image)}" alt="Originální stránka skript" loading="lazy"/>`:''}${sourceLink(c)}</div><div class="status-buttons"><button class="no" data-action="grade-quiz" data-id="repeat">↻ Procvičit</button><button class="yes" data-action="grade-quiz" data-id="know">✓ Umím</button></div><button class="primary-btn" data-action="next">Další otázka ${ico('arrow',17)}</button>`:''}
+ ${status?`<div class="result-note"><strong>${status===q.correct?'Správně!':'Tentokrát ne.'}</strong><p>${escapeHTML(c.answer)}</p>${sourceLink(c)}</div><div class="status-buttons"><button class="no" data-action="grade-quiz" data-id="repeat">↻ Procvičit</button><button class="yes" data-action="grade-quiz" data-id="know">✓ Umím</button></div><button class="primary-btn" data-action="next">Další otázka ${ico('arrow',17)}</button>`:''}
  <div class="stack-ctrl"><button data-action="next">Přeskočit →</button><button data-action="quit">Ukončit sérii</button></div>`;
 }
 function completion(kind){const isQuiz=kind==='quiz';let answered=0,correct=0;for(const id of session?.ids||[]){const p=(isQuiz?progress.quizzes:progress.cards)[id];if(p){answered++;if(p.status==='know')correct++}}
@@ -139,7 +140,7 @@ function settingsSheet(){return `<div class="modal-backdrop" data-action="close-
  <div class="setting-list" style="margin-top:24px"><button class="secondary-btn" data-action="export">↓ Exportovat JSON</button><button class="secondary-btn" data-action="import">↑ Importovat JSON</button></div>
  <input type="file" id="backup-file" accept="application/json,.json" style="display:none" aria-label="Soubor se zálohou"/>
  <hr class="separator"/><div class="row"><span class="small-muted">Smazání pokroku na tomto zařízení</span><button class="mini-action" data-action="reset" style="color:#a46a64">Vymazat</button></div>
- <hr class="separator"/><p class="footnote">Neobsahuje žádné účty ani reklamní sledování. Zdrojové PDF jsou přiložené; při nejasnosti automatického přepisu rozhoduje originální stránka.</p></div></div>`}
+ <hr class="separator"/><p class="footnote">Neobsahuje žádné účty ani reklamní sledování. Původní PDF nejsou veřejnou součástí aplikace. Pokud přepis obsahuje nejasný vzorec, ověř ho v původních skriptech.</p></div></div>`}
 function empty(){return `<div class="no-data"><h3>Pro tenhle výběr nic není.</h3><p>Uprav kapitoly nebo typy karet.</p><button class="secondary-btn" data-action="filters">Změnit filtry</button></div>`}
 function render(){const root=$('#app');if(!root)return;let content='';if(view==='home')content=home();else if(view==='study')content=session?.kind==='study'?studyPage():preSessionPage('study');else if(view==='quiz')content=session?.kind==='quiz'?quizPage():preSessionPage('quiz');else content=stats();root.innerHTML=`<main class="app">${topbar()}${content}${navigation()}</main>${overlay==='filters'?filterSheet():overlay==='settings'?settingsSheet():''}${zoomSrc?`<div class="zoom"><button data-action="unzoom">Zavřít ✕</button><img alt="Přiblížené znění skript" src="${escapeHTML(zoomSrc)}"/></div>`:''}`;}
 function resetSession(){session=null;mcqAnswer=null;studyRevealed=false}
